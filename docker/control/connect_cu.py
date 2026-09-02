@@ -26,6 +26,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import capture  # noqa: E402
+import handoff  # noqa: E402
 
 BIND = os.environ.get("GBM_CONNECT_BIND", "0.0.0.0")
 PORT = int(os.environ.get("GBM_CONNECT_PORT", "1337"))
@@ -311,6 +312,14 @@ class Handler(BaseHTTPRequestHandler):
             if not self._auth():
                 return
             try:
+                held = handoff.read()
+                if held:
+                    self._send(409, {
+                        "code": "failed_precondition",
+                        "message": "handoff active: human has the desk",
+                        "handoff": held,
+                    })
+                    return
                 args = extract_cu_args(body)
                 if args is None:
                     self._send(400, {"code": "invalid_argument", "message": "missing computer_use_args"})

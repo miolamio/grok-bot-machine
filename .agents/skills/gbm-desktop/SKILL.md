@@ -42,6 +42,7 @@ noVNC (human watch only): `http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=o
 | Desk PNG | `./scripts/gbm screenshot -o workspace/desk.png` |
 | Pointer | `./scripts/gbm mouse 640 400` / `./scripts/gbm click 640 400` |
 | Type / key | `./scripts/gbm type 'text'` / `./scripts/gbm key Return` |
+| Human takeover | `./scripts/gbm handoff --reason captcha -m '…'` then `./scripts/gbm resume` |
 
 Router (pick the first that fits):
 
@@ -54,6 +55,21 @@ Router (pick the first that fits):
 Unknown `type` in a batch applies **nothing**. Max 20 steps. Shell success is `ok` **and** `exit == 0`.
 
 Pixel vision loop (PNG → click) is a different contract: load **gbm-grok-cu**.
+
+## Human handoff
+
+Do **not** type passwords, 2FA codes, captchas, or payment details. Freeze the desk and give it to the human:
+
+```bash
+./scripts/gbm handoff --reason captcha -m 'Cloudflare on example.com'
+# JSON: novnc URL, reason, workspace/handoff.png (frame *before* the freeze)
+```
+
+`--reason`: `captcha` | `login` | `2fa` | `payment` | `unclear` | `other`.
+
+Until `./scripts/gbm resume`: clicks, type, CDP, AT-SPI actions, and screenshots return **409**. `shell` and tree-only `observe` still work. Tell the user to open `handoff.novnc` (`resize=off`), do the thing, then say they are done — you call `resume` and **re-observe** (do not reuse the pre-handoff PNG).
+
+`--open` launches noVNC on the Mac.
 
 ## Auth
 

@@ -123,6 +123,28 @@ TOOLS = [
             "required": ["cmd"],
         },
     },
+    {
+        "name": "handoff",
+        "description": (
+            "Freeze GUI (clicks, type, screenshots) and ask a human to use noVNC. "
+            "Use for captcha, login, 2FA, payment. Omit reason to read status."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "captcha | login | 2fa | payment | unclear | other",
+                },
+                "message": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "resume",
+        "description": "End human handoff so the agent may click again.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -162,6 +184,15 @@ def call_tool(name: str, args: dict) -> dict:
             if args.get("cwd"):
                 step["cwd"] = args["cwd"]
             return _as_text(http("POST", "/act", {"steps": [step]}))
+        if name == "handoff":
+            if not args.get("reason"):
+                return _as_text(http("GET", "/handoff"))
+            return _as_text(http("POST", "/handoff", {
+                "reason": args.get("reason"),
+                "message": args.get("message") or "",
+            }))
+        if name == "resume":
+            return _as_text(http("POST", "/handoff/resume", {}))
         return _as_error(f"unknown tool {name}")
     except Exception as e:
         return _as_error(str(e))

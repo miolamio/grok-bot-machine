@@ -181,7 +181,13 @@ def http(
             parsed = json.loads(err)
         except json.JSONDecodeError:
             parsed = {"error": err[:800], "status": e.code}
-        raise SystemExit(json.dumps({"ok": False, "status": e.code, "error": parsed}, ensure_ascii=False))
+        payload = parsed if isinstance(parsed, dict) else {"error": parsed}
+        if "ok" not in payload:
+            payload = {"ok": False, "status": e.code, "error": payload}
+        else:
+            payload.setdefault("status", e.code)
+        emit(payload)
+        raise SystemExit(1)
     except urllib.error.URLError as e:
         raise SystemExit(json.dumps({"ok": False, "error": f"unreachable {full}: {e}"}, ensure_ascii=False))
 
@@ -268,6 +274,12 @@ def main(argv: list[str] | None = None) -> int:
 
     ky = sub.add_parser("key", help="xdotool key (e.g. Return, ctrl+a)")
     ky.add_argument("keys", nargs="+")
+
+    ho = sub.add_parser("handoff", help="Freeze GUI; human uses noVNC. Omit --reason to read status.")
+    ho.add_argument("--reason", default=None, help="captcha | login | 2fa | payment | unclear | other")
+    ho.add_argument("-m", "--message", default="", help="What the human should do")
+    ho.add_argument("--open", action="store_true", help="open noVNC in the Mac browser")
+    sub.add_parser("resume", help="End handoff; agent may click again")
 
     cs = sub.add_parser("connect", help="Grok-faithful Connect-RPC on :1337")
     csub = cs.add_subparsers(dest="ccmd", required=True)
@@ -381,6 +393,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "key":
         _need_token(token)
         return _exit_act(_act(url, token, [{"type": "xdotool", "action": "key", "keys": args.keys}], timeout))
+
+    if args.cmd == "handoff":
+        _need_token(token)
+        if not args.reason:
+            emit(http(url, token, "GET", "/handoff", timeout=min(timeout, 15)))
+            return 0
+        result = http(
+            url, token, "POST", "/handoff",
+            {"reason": args.reason, "message": args.message},
+            timeout=timeout,
+        )
+        emit(result)
+        novnc = (result.get("handoff") or {}).get("novnc")
+        if args.open and novnc:
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.run([opener, novnc], check=False, timeout=8, capture_output=True)
+        return 0 if result.get("ok") is not False else 1
+
+    if args.cmd == "resume":
+        _need_token(token)
+        result = http(url, token, "POST", "/handoff/resume", {}, timeout=min(timeout, 15))
+        emit(result)
+        return 0 if result.get("ok") is not False else 1
 
     if args.cmd == "connect":
         curl = resolve_connect_url(args.connect_url)

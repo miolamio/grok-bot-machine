@@ -4,12 +4,13 @@ A native-arch Docker desktop that an agent on the host can see and operate.
 
 It clones grok-bot **Layer B**: the Debian 13 XFCE-like session (Xvfb 1280×800, xfwm4, picom, Plank, Thunar, Chromium, noVNC). It is not the 8 vCPU / 16 GiB KVM guest around that session, and it does not vendor grok’s `exec-daemon` binary. There is no LLM in the image.
 
-Drive it from the Mac with **`./scripts/gbm`**. Two contracts share one display:
+Drive it from the Mac with **`./scripts/gbm`**. Two contracts share one display. When the agent cannot continue (captcha, login, 2FA, payment), it **hands the same desk to you** over noVNC and freezes its own clicks.
 
-| Contract | Port | Skill | What the agent does |
+| Contract | Port | Skill | What happens |
 | --- | --- | --- | --- |
 | Native Computer Use | `127.0.0.1:7070` | `gbm-desktop` | shell → Chrome DevTools → AT-SPI → `xdotool`. Screenshot last. |
-| Grok-faithful Computer Use | `127.0.0.1:1337` | `gbm-grok-cu` | 1280×800 PNG, then click/type/key on the same coordinates. |
+| Grok-faithful Computer Use | `127.0.0.1:1337` | `gbm-grok-cu` | 1280×800 PNG, then click/type/key on those coordinates. |
+| Human handoff | noVNC `6080` | both skills | GUI frozen until `./scripts/gbm resume`. |
 
 The pointer moves inside Xvfb, never on the Mac.
 
@@ -91,6 +92,9 @@ From the repository root. `--help` is the flag list. JSON on stdout. PNGs go to 
 ./scripts/gbm connect click 640 400
 ./scripts/gbm connect type 'hello'
 ./scripts/gbm connect exec '[{"scroll":{"direction":2,"amount":3}}]'
+
+./scripts/gbm handoff --reason captcha -m 'Cloudflare on example.com'
+./scripts/gbm resume
 ```
 
 | Command | API |
@@ -98,6 +102,7 @@ From the repository root. `--help` is the flag list. JSON on stdout. PNGs go to 
 | `health` / `ready` / `doctor` / `observe` / `act` / `shell` | Native `:7070` |
 | `screenshot` / `click` / `mouse` / `type` / `key` | Native `:7070` (`xdotool` or capture) |
 | `connect …` | Connect-RPC `:1337` |
+| `handoff` / `resume` | Freeze GUI for a human on noVNC; unfreeze |
 
 `:7070` uses `GBM_CONTROL_TOKEN` (compose default `dev-local-token`). If unset, the CLI reads `/tmp/gbm-control.token` from the container. `:1337` uses `Authorization: Bearer local` unless `GBM_CONNECT_TOKEN` is set. Those two secrets are different unless you set them equal.
 
@@ -109,10 +114,10 @@ Checked in at `.agents/skills/` (Agent Skills standard). Grok, Cursor, Codex, an
 
 | Skill | Use when |
 | --- | --- |
-| [`gbm-desktop`](.agents/skills/gbm-desktop/SKILL.md) | Structured CU on the container: files, GTK, Chrome refs, fallback clicks |
-| [`gbm-grok-cu`](.agents/skills/gbm-grok-cu/SKILL.md) | Vision loop: look at a 1280×800 PNG, then `connect click` / `type` |
+| [`gbm-desktop`](.agents/skills/gbm-desktop/SKILL.md) | Structured CU: files, GTK, Chrome refs, fallback clicks, **handoff** |
+| [`gbm-grok-cu`](.agents/skills/gbm-grok-cu/SKILL.md) | Vision loop: 1280×800 PNG → `connect click` / `type` |
 
-Both skills tell the agent to call `./scripts/gbm`, not raw curl, and not to move the Mac cursor.
+Both skills tell the agent to call `./scripts/gbm`, not raw curl, not to move the Mac cursor, and not to type passwords — call `handoff` instead.
 
 Native router (first match):
 
@@ -123,6 +128,39 @@ Native router (first match):
 5. **screenshot** — last resort, or when a human asks to see the desk.
 
 `act` batches 1–20 steps. An unknown `type` applies **nothing**. Shell success is `ok` **and** `exit == 0`.
+
+## Human handoff
+
+Same idea as the original grok-bot: captcha, login, 2FA, and payment go to a person. The person uses **the same 1280×800 desk** over noVNC. While that happens the agent must not click or screenshot (a PNG would put the password in the model context).
+
+### Try this
+
+Box already `ready`. Optional: watch noVNC in another window.
+
+```bash
+./scripts/gbm handoff --reason captcha -m 'Pretend this is a Cloudflare wall'
+# JSON: novnc URL, reason, screenshot=/workspace/handoff.png (frame *before* the freeze)
+# --open  → launches noVNC on the Mac
+
+./scripts/gbm doctor
+# handoff.reason=captcha, readiness.gui_frozen=true
+
+./scripts/gbm click 640 400          # 409
+./scripts/gbm connect click 10 10    # 409
+./scripts/gbm screenshot -o workspace/no.png   # 409
+./scripts/gbm shell 'echo still-ok'  # allowed
+./scripts/gbm observe                # tree only, allowed
+
+# You: open http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=off
+# do the thing, then:
+
+./scripts/gbm resume
+./scripts/gbm observe                # look again; do not reuse handoff.png
+```
+
+`--reason`: `captcha` | `login` | `2fa` | `payment` | `unclear` | `other`.
+
+Until resume, both `:7070` GUI steps and `:1337` Exec return **409**. `GET /handoff` (or `./scripts/gbm handoff` with no `--reason`) is the current state.
 
 ## Ports
 
@@ -144,6 +182,9 @@ Prefer `./scripts/gbm`. The servers are still JSON HTTP.
 ```
 GET  /health
 GET  /doctor
+GET  /handoff
+POST /handoff            { reason, message? }
+POST /handoff/resume
 POST /observe     { include_screenshot?, include_tree?, window? }
 POST /act         { steps: [ { type: shell|cdp|a11y|xdotool|screenshot, ... } ] }
 ```
@@ -156,11 +197,11 @@ POST /agent.v1.ControlService/GetCapabilities
 POST /agent.v1.ExecService/Exec    { computerUseArgs: { actions: [...] } }
 ```
 
-Actions: `mouse_move`, `click`, `mouse_down` / `mouse_up`, `drag`, `scroll`, `type`, `key`, `wait`, `screenshot`, `cursor_position`. Clicks are OS-level on the Xvfb desk, not Chrome CDP. This stand-in answers Exec as unary JSON; original grok streams Connect frames.
+Actions: `mouse_move`, `click`, `mouse_down` / `mouse_up`, `drag`, `scroll`, `type`, `key`, `wait`, `screenshot`, `cursor_position`. Clicks are OS-level on the Xvfb desk, not Chrome CDP. This stand-in answers Exec as unary JSON; original grok streams Connect frames. Exec is **409** while a handoff is active.
 
 ## MCP
 
-Optional stdio proxy to `:7070` for hosts that prefer MCP over shell. It still drives the Docker desktop, never the Mac. Wrapper: `./scripts/gbm-mcp`. Config: `.mcp.json`. Tools: `doctor`, `observe`, `act`, `shell`.
+Optional stdio proxy to `:7070` for hosts that prefer MCP over shell. It still drives the Docker desktop, never the Mac. Wrapper: `./scripts/gbm-mcp`. Config: `.mcp.json`. Tools: `doctor`, `observe`, `act`, `shell`, `handoff`, `resume`.
 
 ## Verify
 
@@ -180,6 +221,7 @@ python3 scripts/a11y-smoke.py      # GTK set_value + perform_action
 python3 scripts/inside-smoke.py    # gbm-act in-box; kill it, Xvfb stays
 python3 scripts/mcp-smoke.py       # MCP hits the container; Mac cursor still
 python3 scripts/connect-smoke.py   # Connect 401/200/415/404, PNG, click
+python3 scripts/handoff-smoke.py   # freeze GUI, shell still works, resume
 ```
 
 Each script prints `ALL … SMOKE CHECKS PASSED` and exits 0. `smoke.sh` leaves Thunar and Chromium running. Watch noVNC: the pointer should move in the **container**.
@@ -192,7 +234,7 @@ Each script prints `ALL … SMOKE CHECKS PASSED` and exits 0. `smoke.sh` leaves 
 
 One 1280×800 desk (`DISPLAY=:1`). Do not change width while an agent is recording.
 
-Not cloned: `exec-daemon` ELF, pod-daemon, webauthn, egress, UA stamps, window-owner tokens, PTY `1338`, window-router `1339`, extra desks (`start-window N`). Host CDP is `9222` via socat; original formula is `:1 → 9223`.
+Not cloned: `exec-daemon` ELF, pod-daemon, webauthn, egress, UA stamps, window-owner tokens, PTY `1338`, window-router `1339`, extra desks (`start-window N`). Host CDP is `9222` via socat; original formula is `:1 → 9223`. Handoff is localhost noVNC on this one desk, not a tokened fork-noVNC.
 
 Keep xfwm4 + picom xrender + Plank. Do not swap in fluxbox.
 
@@ -202,7 +244,7 @@ Keep xfwm4 + picom xrender + Plank. Do not swap in fluxbox.
 compose.yaml                 # localhost ports, 1280m, shm 64m
 Dockerfile                   # debian:trixie-slim, native arch
 docker/entrypoint.sh         # Xvfb → wallpaper → vnc → wm → picom → plank → APIs
-docker/control/              # :7070, :1337, AT-SPI, CDP, capture, CLI module
+docker/control/              # :7070, :1337, AT-SPI, CDP, capture, CLI, handoff
 scripts/gbm                  # host CLI
 .agents/skills/              # gbm-desktop, gbm-grok-cu
 mcp/gbm_mcp.py               # host MCP stdio

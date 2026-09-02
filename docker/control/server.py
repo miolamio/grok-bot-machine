@@ -20,6 +20,7 @@ if HERE not in sys.path:
 import a11y  # noqa: E402
 import capture  # noqa: E402
 import cdp  # noqa: E402
+import handoff  # noqa: E402
 
 TOKEN = os.environ.get("GBM_CONTROL_TOKEN", "")
 BIND = os.environ.get("GBM_CONTROL_BIND", "0.0.0.0")
@@ -48,14 +49,18 @@ def doctor() -> dict:
     except Exception:
         xtest_ok = False
     chrome_ok = cdp.debug_ok()
+    held = handoff.read()
     cap_ok = False
     cap_backend = capture.last_backend()
-    try:
-        g = capture.grab()
-        cap_ok = g.get("width", 0) > 0
-        cap_backend = g.get("backend") or cap_backend
-    except Exception:
-        cap_ok = False
+    if held:
+        cap_backend = "handoff"
+    else:
+        try:
+            g = capture.grab()
+            cap_ok = g.get("width", 0) > 0
+            cap_backend = g.get("backend") or cap_backend
+        except Exception:
+            cap_ok = False
     no_bridge = os.environ.get("NO_AT_BRIDGE") == "1"
     blockers = []
     if no_bridge:
@@ -71,14 +76,17 @@ def doctor() -> dict:
     next_step = None
     if blockers:
         next_step = blockers[0]
+    elif held:
+        next_step = "human handoff (%s); open noVNC then gbm resume" % held.get("reason")
     elif not chrome_ok:
         next_step = "launch box-chrome to enable browser use"
     readiness = {
         "can_shell": True,
-        "can_cdp": chrome_ok,
-        "can_atspi": at_ok and at_count >= 0 and a11y.available(),
-        "can_xdotool": xdotool_ok,
-        "can_screenshot": cap_ok,
+        "can_cdp": chrome_ok and not held,
+        "can_atspi": at_ok and at_count >= 0 and a11y.available() and not held,
+        "can_xdotool": xdotool_ok and not held,
+        "can_screenshot": cap_ok and not held,
+        "gui_frozen": bool(held),
     }
     return {
         "display": DISPLAY,
@@ -93,10 +101,11 @@ def doctor() -> dict:
         },
         "capture": {"backend": cap_backend, "ok": cap_ok, "ms": capture.last_ms()},
         "control": {"token_set": bool(TOKEN), "port": PORT},
+        "handoff": held,
         "readiness": readiness,
         "blockers": blockers,
         "next_step": next_step,
-        "suggest": _suggest(),
+        "suggest": "handoff" if held else _suggest(),
     }
 
 
@@ -130,19 +139,23 @@ def observe(body: dict) -> dict:
         "screenshot": None,
     }
     if include_shot or tree_empty:
-        g = capture.grab()
-        import base64
-        out["screenshot"] = {
-            "pngBase64": base64.b64encode(g["png"]).decode("ascii"),
-            "width": g["width"],
-            "height": g["height"],
-            "backend": g["backend"],
-            "ms": g["ms"],
-        }
-        out["cursor"] = g["cursor"]
-        out["activeWindow"] = g.get("activeWindow")
-        if not include_shot and tree_empty:
-            out["screenshotReason"] = "tree_empty"
+        if handoff.read():
+            out["screenshotReason"] = "handoff"
+            out["cursor"] = capture._cursor()
+        else:
+            g = capture.grab()
+            import base64
+            out["screenshot"] = {
+                "pngBase64": base64.b64encode(g["png"]).decode("ascii"),
+                "width": g["width"],
+                "height": g["height"],
+                "backend": g["backend"],
+                "ms": g["ms"],
+            }
+            out["cursor"] = g["cursor"]
+            out["activeWindow"] = g.get("activeWindow")
+            if not include_shot and tree_empty:
+                out["screenshotReason"] = "tree_empty"
     else:
         out["cursor"] = capture._cursor()
     return out
@@ -287,6 +300,27 @@ def act(body: dict) -> dict:
     return {"ok": True, "results": results}
 
 
+def _start_handoff(body: dict) -> dict:
+    shot_path = "/workspace/handoff.png"
+    saved = None
+    try:
+        g = capture.grab()
+        parent = os.path.dirname(shot_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(shot_path, "wb") as f:
+            f.write(g["png"])
+        saved = shot_path
+    except Exception:
+        saved = None
+    state = handoff.begin(
+        str(body.get("reason") or "other"),
+        str(body.get("message") or ""),
+        screenshot=saved,
+    )
+    return {"ok": True, "handoff": state}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "gbm-control/0.1"
 
@@ -331,6 +365,11 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 self._send(200, doctor())
             return
+        if path in ("/handoff", "/v1/handoff"):
+            with LOCK:
+                h = handoff.read()
+            self._send(200, {"ok": True, "handoff": h})
+            return
         self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -347,11 +386,28 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             with LOCK:
+                if path in ("/handoff", "/v1/handoff"):
+                    self._send(200, _start_handoff(body if isinstance(body, dict) else {}))
+                    return
+                if path in ("/handoff/resume", "/v1/handoff/resume"):
+                    handoff.clear()
+                    self._send(200, {"ok": True, "handoff": None})
+                    return
                 if path in ("/observe", "/v1/observe"):
-                    self._send(200, observe(body if isinstance(body, dict) else {}))
+                    req = body if isinstance(body, dict) else {}
+                    held = handoff.read()
+                    if held and req.get("include_screenshot"):
+                        self._send(409, {"ok": False, "error": "handoff", "handoff": held})
+                        return
+                    self._send(200, observe(req))
                     return
                 if path in ("/act", "/v1/act", "/v1/desktop"):
-                    self._send(200, act(body if isinstance(body, dict) else {}))
+                    req = body if isinstance(body, dict) else {}
+                    held = handoff.blocks_steps(req.get("steps") or [])
+                    if held:
+                        self._send(409, {"ok": False, "error": "handoff", "handoff": held})
+                        return
+                    self._send(200, act(req))
                     return
                 if path in ("/doctor", "/v1/doctor"):
                     self._send(200, doctor())
