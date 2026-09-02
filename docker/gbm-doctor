@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python3 /opt/grok-bot/control/server.py --doctor

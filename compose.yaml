@@ -1,0 +1,35 @@
+# Clone of grok-bot Layer B (the Debian desktop container), not the 8 vCPU / 16 GiB KVM guest.
+# Bind noVNC to localhost. Idle is a few hundred MiB; Chrome is what costs RAM.
+name: grok-bot-machine
+
+services:
+  desktop:
+    build: .
+    image: grok-bot-machine:local
+    hostname: cursor
+    container_name: grok-bot
+    environment:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      TZ: UTC
+      DISPLAY: ":1"
+      GTK_A11Y: "1"
+      QT_ACCESSIBILITY: "1"
+      GBM_CONTROL_TOKEN: ${GBM_CONTROL_TOKEN:-dev-local-token}
+      SAND_CHROME_REMOTE_DEBUG_PORT: "9222"
+    ports:
+      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:7070:7070"
+      - "127.0.0.1:9222:9223"
+      - "127.0.0.1:1337:1337"
+    volumes:
+      - ./workspace:/workspace
+    shm_size: "64m"
+    mem_limit: 1280m
+    cpus: "1.0"
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 524288
+        hard: 524288
+    restart: unless-stopped

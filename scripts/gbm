@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Host CLI for grok-bot-machine. Drives the Docker desktop, not the Mac.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export GBM_ROOT="$ROOT"
+export GBM_CLI_PROG=gbm
+export PYTHONUNBUFFERED=1
+exec python3 "$ROOT/docker/control/gbm_act.py" "$@"

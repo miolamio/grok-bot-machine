@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gbm": {
+      "command": "python3",
+      "args": ["mcp/gbm_mcp.py"],
+      "env": {
+        "GBM_CONTROL_URL": "http://127.0.0.1:7070",
+        "GBM_CONTAINER": "grok-bot"
+      }
+    }
+  }
+}

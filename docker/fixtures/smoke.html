@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>GBM smoke</title>
+<h1>Browser Use smoke</h1>
+<label>Name <input id="name" name="name" aria-label="Name"></label>
+<button id="go" type="button">Go</button>
+<p id="out">idle</p>
+<script>
+document.getElementById("go").onclick = function () {
+  var v = document.getElementById("name").value;
+  document.getElementById("out").textContent = "clicked:" + v;
+};
+</script>

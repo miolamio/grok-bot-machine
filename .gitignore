@@ -1,0 +1,32 @@
+# Bind-mount user files (keep the directory)
+workspace/*
+!workspace/.gitkeep
+
+# Interview dumps, original-bot tarballs, local screenshots
+.dev/
+
+# Browser verification cache
+.playwright-cli/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp
+*~
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.token
+
+# Logs
+*.log

@@ -1,0 +1,8 @@
+.git
+.gitignore
+.dev
+.playwright-cli
+.agents
+workspace
+*.md
+.DS_Store

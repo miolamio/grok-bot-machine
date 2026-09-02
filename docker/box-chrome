@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Dock launcher from grok-bot box-chrome.desktop. Sand/webauthn/cgroup bits omitted.
+set -euo pipefail
+
+bin=/usr/bin/google-chrome-stable
+if [ ! -x "$bin" ]; then
+  bin=/usr/bin/chromium
+fi
+
+DISPLAY_NUM="${DISPLAY#:}"
+DISPLAY_NUM="${DISPLAY_NUM%%.*}"
+DISPLAY_NUM="${DISPLAY_NUM:-1}"
+
+if [ "$DISPLAY_NUM" -ge 2 ]; then
+  PROFILE="${CHROME_USER_DATA_DIR:-$HOME/chrome-profile-${DISPLAY_NUM}}"
+  DEBUG_PORT="${SAND_CHROME_REMOTE_DEBUG_PORT:-$((9222 + DISPLAY_NUM))}"
+else
+  PROFILE="${CHROME_USER_DATA_DIR:-$HOME/chrome-profile}"
+  DEBUG_PORT="${SAND_CHROME_REMOTE_DEBUG_PORT:-9222}"
+fi
+mkdir -p "$PROFILE"
+
+exec nice -n 10 "$bin" \
+  --no-sandbox \
+  --disable-dev-shm-usage \
+  --password-store=basic \
+  --no-first-run \
+  --no-default-browser-check \
+  --hide-crash-restore-bubble \
+  --start-maximized \
+  --class=box-chrome \
+  --user-data-dir="$PROFILE" \
+  --enable-unsafe-swiftshader \
+  --force-renderer-accessibility \
+  --remote-debugging-port="$DEBUG_PORT" \
+  --remote-debugging-address=0.0.0.0 \
+  --remote-allow-origins=* \
+  "$@"

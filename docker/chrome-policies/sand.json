@@ -1,0 +1,8 @@
+{
+  "CommandLineFlagSecurityWarningsEnabled": false,
+  "DefaultNotificationsSetting": 2,
+  "BlockThirdPartyCookies": false,
+  "BrowserSignin": 0,
+  "HighEfficiencyModeEnabled": true,
+  "MemorySaverModeSavings": 2
+}
