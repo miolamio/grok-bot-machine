@@ -126,23 +126,47 @@ TOOLS = [
     {
         "name": "handoff",
         "description": (
-            "Freeze GUI (clicks, type, screenshots) and ask a human to use noVNC. "
-            "Use for captcha, login, 2FA, payment. Omit reason to read status."
+            "Desk kit only: freeze GUI and give noVNC to a human. instruction is "
+            "required (e.g. Sign in to Google). reason: auth | captcha | payment | other. "
+            "Chat/host kits: ask in conversation, do not call this. Omit instruction "
+            "to read status. After calling, stop the turn until the human says done."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
+                "instruction": {
+                    "type": "string",
+                    "description": "Required to start. Short string for the human.",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Alias of instruction",
+                },
                 "reason": {
                     "type": "string",
-                    "description": "captcha | login | 2fa | payment | unclear | other",
+                    "description": "auth | captcha | payment | other (login/2fa → auth). Optional.",
                 },
-                "message": {"type": "string"},
+                "domain": {
+                    "type": "string",
+                    "description": "App you were entering, e.g. drive.google.com",
+                },
+                "idp_domain": {
+                    "type": "string",
+                    "description": "IdP host if different, e.g. accounts.google.com",
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "desk (default). chat/host are rejected — do not freeze.",
+                },
             },
         },
     },
     {
         "name": "resume",
-        "description": "End human handoff so the agent may click again.",
+        "description": (
+            "End desk handoff after the human says done. Then screenshot the desk "
+            "in the new turn. Do not reuse the pre-freeze PNG."
+        ),
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]
@@ -185,12 +209,29 @@ def call_tool(name: str, args: dict) -> dict:
                 step["cwd"] = args["cwd"]
             return _as_text(http("POST", "/act", {"steps": [step]}))
         if name == "handoff":
-            if not args.get("reason"):
+            inst = (args.get("instruction") or args.get("message") or "").strip()
+            extras = bool(
+                args.get("reason")
+                or args.get("domain")
+                or args.get("idp_domain")
+                or args.get("idpDomain")
+                or (args.get("kind") and args.get("kind") != "desk")
+            )
+            if not inst:
+                if extras:
+                    return _as_error("instruction_required")
                 return _as_text(http("GET", "/handoff"))
-            return _as_text(http("POST", "/handoff", {
-                "reason": args.get("reason"),
-                "message": args.get("message") or "",
-            }))
+            body = {
+                "instruction": inst,
+                "kind": args.get("kind") or "desk",
+            }
+            if args.get("reason"):
+                body["reason"] = args["reason"]
+            if args.get("domain"):
+                body["domain"] = args["domain"]
+            if args.get("idp_domain") or args.get("idpDomain"):
+                body["idp_domain"] = args.get("idp_domain") or args.get("idpDomain")
+            return _as_text(http("POST", "/handoff", body))
         if name == "resume":
             return _as_text(http("POST", "/handoff/resume", {}))
         return _as_error(f"unknown tool {name}")

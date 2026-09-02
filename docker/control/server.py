@@ -77,7 +77,9 @@ def doctor() -> dict:
     if blockers:
         next_step = blockers[0]
     elif held:
-        next_step = "human handoff (%s); open noVNC then gbm resume" % held.get("reason")
+        next_step = "human handoff (%s); open noVNC then gbm resume" % (
+            held.get("instruction") or held.get("reason") or "desk"
+        )
     elif not chrome_ok:
         next_step = "launch box-chrome to enable browser use"
     readiness = {
@@ -300,25 +302,61 @@ def act(body: dict) -> dict:
     return {"ok": True, "results": results}
 
 
-def _start_handoff(body: dict) -> dict:
-    shot_path = "/workspace/handoff.png"
-    saved = None
+def _write_png(path: str) -> dict[str, Any] | None:
     try:
         g = capture.grab()
-        parent = os.path.dirname(shot_path)
+        parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(shot_path, "wb") as f:
+        with open(path, "wb") as f:
             f.write(g["png"])
-        saved = shot_path
+        return {
+            "screenshot": path,
+            "width": g.get("width"),
+            "height": g.get("height"),
+            "backend": g.get("backend"),
+            "ms": g.get("ms"),
+        }
     except Exception:
-        saved = None
+        return None
+
+
+def _start_handoff(body: dict) -> tuple[int, dict]:
+    kind, err = handoff.parse_kind(body.get("kind"))
+    if err == "not_desk":
+        return 400, {
+            "ok": False,
+            "error": "not_desk",
+            "kind": kind,
+            "hint": "ask the human in chat; do not freeze the desk",
+        }
+    if err:
+        return 400, {"ok": False, "error": "unknown_kind", "kind": kind}
+    inst = str(body.get("instruction") or body.get("message") or "").strip()
+    if not inst:
+        return 400, {"ok": False, "error": "instruction_required"}
+    saved = None
+    meta = _write_png(handoff.BEFORE_SHOT)
+    if meta:
+        saved = meta.get("screenshot")
     state = handoff.begin(
-        str(body.get("reason") or "other"),
-        str(body.get("message") or ""),
+        inst,
+        reason=body.get("reason"),
         screenshot=saved,
+        domain=body.get("domain"),
+        idp_domain=body.get("idp_domain") or body.get("idpDomain"),
+        kind="desk",
     )
-    return {"ok": True, "handoff": state}
+    return 200, {"ok": True, "handoff": state}
+
+
+def _resume_handoff() -> dict:
+    handoff.clear()
+    out: dict[str, Any] = {"ok": True, "handoff": None}
+    meta = _write_png(handoff.AFTER_SHOT)
+    if meta:
+        out.update(meta)
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -387,11 +425,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with LOCK:
                 if path in ("/handoff", "/v1/handoff"):
-                    self._send(200, _start_handoff(body if isinstance(body, dict) else {}))
+                    code, payload = _start_handoff(body if isinstance(body, dict) else {})
+                    self._send(code, payload)
                     return
                 if path in ("/handoff/resume", "/v1/handoff/resume"):
-                    handoff.clear()
-                    self._send(200, {"ok": True, "handoff": None})
+                    self._send(200, _resume_handoff())
                     return
                 if path in ("/observe", "/v1/observe"):
                     req = body if isinstance(body, dict) else {}

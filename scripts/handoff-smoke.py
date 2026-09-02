@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Handoff freezes GUI on :7070 and :1337; shell still works; resume unfreezes."""
+"""Handoff freezes GUI on :7070 and :1337; shell still works; resume unfreezes.
+
+Payload matches request_box_help: instruction required; reason auth|captcha|payment|other.
+"""
 from __future__ import annotations
 
 import json
@@ -35,8 +38,38 @@ def run(*args: str, expect: int = 0, timeout: float = 45.0) -> dict:
     return body
 
 
+def png_ok(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(24)
+    except OSError:
+        return False
+    return raw[:8] == b"\x89PNG\r\n\x1a\n" and int.from_bytes(raw[16:20], "big") == 1280
+
+
 def main() -> int:
     os.environ.setdefault("GBM_CONTROL_TOKEN", "dev-local-token")
+    sys.path.insert(0, os.path.join(ROOT, "docker", "control"))
+    import handoff as hmod  # noqa: E402
+
+    if hmod.normalize_reason("auth") != "auth":
+        die("auth reason")
+    if hmod.normalize_reason("login") != "auth":
+        die("login→auth")
+    if hmod.normalize_reason("2fa") != "auth":
+        die("2fa→auth")
+    if hmod.normalize_reason(None) is not None:
+        die("omit reason")
+    if hmod.normalize_reason("captcha") != "captcha":
+        die("captcha reason")
+    if hmod.parse_kind("chat")[1] != "not_desk":
+        die("chat kind")
+    if hmod.parse_kind(None) != ("desk", None):
+        die("default kind")
+    if hmod.normalize_host("https://accounts.google.com/signin") != "accounts.google.com":
+        die("domain host")
+    ok("handoff.py unit")
+
     subprocess.run(["docker", "inspect", CONTAINER], capture_output=True, check=True)
     run("resume")  # clear leftover
     run("ready")
@@ -45,6 +78,52 @@ def main() -> int:
     if st.get("handoff"):
         die(f"expected empty handoff, got {st}")
     ok("handoff idle")
+
+    missing = run("handoff", "--reason", "auth", expect=2)
+    if missing.get("error") != "instruction_required":
+        die(f"reason without instruction {missing}")
+    ok("instruction required")
+
+    wall = run("handoff", "-m", "Accept cookies")
+    wh = wall.get("handoff") or {}
+    if wall.get("ok") is not True or wh.get("instruction") != "Accept cookies":
+        die(f"cookie wall {wall}")
+    if "reason" in wh:
+        die(f"cookie wall should omit reason {wh}")
+    run("resume")
+    ok("instruction without reason")
+
+    chat = run("handoff", "--reason", "other", "--kind", "chat", "-m", "send mail?", expect=1)
+    if chat.get("error") != "not_desk":
+        die(f"chat kind should 400 not_desk {chat}")
+    hostk = run("handoff", "--reason", "other", "--kind", "host", "-m", "Downloads", expect=1)
+    if hostk.get("error") != "not_desk":
+        die(f"host kind should 400 not_desk {hostk}")
+    still = run("handoff")
+    if still.get("handoff"):
+        die(f"non-desk kind froze the desk {still}")
+    ok("chat/host kind not_desk")
+
+    started = run(
+        "handoff", "-m", "Sign in to Google", "--reason", "login",
+        "--domain", "drive.google.com",
+        "--idp-domain", "https://accounts.google.com/signin",
+    )
+    h = started.get("handoff") or {}
+    if started.get("ok") is not True or h.get("reason") != "auth":
+        die(f"login→auth {started}")
+    if h.get("instruction") != "Sign in to Google":
+        die(f"instruction {h}")
+    if h.get("kind") != "desk":
+        die(f"kind {h}")
+    if h.get("domain") != "drive.google.com":
+        die(f"domain {h}")
+    if h.get("idp_domain") != "accounts.google.com":
+        die(f"idp {h}")
+    if "6080" not in (h.get("novnc") or ""):
+        die(f"missing novnc {h}")
+    run("resume")
+    ok("auth + domain/idp")
 
     started = run("handoff", "--reason", "captcha", "-m", "smoke")
     h = started.get("handoff") or {}
@@ -99,6 +178,12 @@ def main() -> int:
     ended = run("resume")
     if ended.get("handoff") is not None:
         die(f"resume {ended}")
+    after = ended.get("screenshot")
+    if not after:
+        die(f"resume missing after-screenshot {ended}")
+    host_after = os.path.join(ROOT, "workspace", os.path.basename(str(after)))
+    if not png_ok(host_after):
+        die(f"handoff-after png bad {host_after}")
     ok("resume")
 
     mv = run("mouse", "40", "50")

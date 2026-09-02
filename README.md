@@ -4,7 +4,7 @@ A native-arch Docker desktop that an agent on the host can see and operate.
 
 It clones grok-bot **Layer B**: the Debian 13 XFCE-like session (Xvfb 1280×800, xfwm4, picom, Plank, Thunar, Chromium, noVNC). It is not the 8 vCPU / 16 GiB KVM guest around that session, and it does not vendor grok’s `exec-daemon` binary. There is no LLM in the image.
 
-Drive it from the Mac with **`./scripts/gbm`**. Two contracts share one display. When the agent cannot continue (captcha, login, 2FA, payment), it **hands the same desk to you** over noVNC and freezes its own clicks.
+Drive it from the Mac with **`./scripts/gbm`**. Two contracts share one display. When the agent hits a secret or a captcha **on that desk**, it freezes its clicks and hands you the same 1280×800 over noVNC. Other “ask a human” cases (chat approval, Mac permissions) are not a desk freeze.
 
 | Contract | Port | Skill | What happens |
 | --- | --- | --- | --- |
@@ -93,8 +93,9 @@ From the repository root. `--help` is the flag list. JSON on stdout. PNGs go to 
 ./scripts/gbm connect type 'hello'
 ./scripts/gbm connect exec '[{"scroll":{"direction":2,"amount":3}}]'
 
-./scripts/gbm handoff --reason captcha -m 'Cloudflare on example.com'
+./scripts/gbm handoff -m 'Sign in to Google' --reason auth --domain drive.google.com
 ./scripts/gbm resume
+./scripts/gbm screenshot -o workspace/desk.png   # new turn: look at the live frame
 ```
 
 | Command | API |
@@ -102,7 +103,7 @@ From the repository root. `--help` is the flag list. JSON on stdout. PNGs go to 
 | `health` / `ready` / `doctor` / `observe` / `act` / `shell` | Native `:7070` |
 | `screenshot` / `click` / `mouse` / `type` / `key` | Native `:7070` (`xdotool` or capture) |
 | `connect …` | Connect-RPC `:1337` |
-| `handoff` / `resume` | Freeze GUI for a human on noVNC; unfreeze |
+| `handoff` / `resume` | Desk kit: freeze GUI for a human on noVNC; unfreeze. Next look is a live screenshot. |
 
 `:7070` uses `GBM_CONTROL_TOKEN` (compose default `dev-local-token`). If unset, the CLI reads `/tmp/gbm-control.token` from the container. `:1337` uses `Authorization: Bearer local` unless `GBM_CONNECT_TOKEN` is set. Those two secrets are different unless you set them equal.
 
@@ -117,7 +118,7 @@ Checked in at `.agents/skills/` (Agent Skills standard). Grok, Cursor, Codex, an
 | [`gbm-desktop`](.agents/skills/gbm-desktop/SKILL.md) | Structured CU: files, GTK, Chrome refs, fallback clicks, **handoff** |
 | [`gbm-grok-cu`](.agents/skills/gbm-grok-cu/SKILL.md) | Vision loop: 1280×800 PNG → `connect click` / `type` |
 
-Both skills tell the agent to call `./scripts/gbm`, not raw curl, not to move the Mac cursor, and not to type passwords — call `handoff` instead.
+Both skills tell the agent to call `./scripts/gbm`, not raw curl, not to move the Mac cursor, and to pick a handoff **kit** (desk freeze vs chat question vs Mac permission) instead of typing passwords.
 
 Native router (first match):
 
@@ -131,15 +132,63 @@ Native router (first match):
 
 ## Human handoff
 
-Same idea as the original grok-bot: captcha, login, 2FA, and payment go to a person. The person uses **the same 1280×800 desk** over noVNC. While that happens the agent must not click or screenshot (a PNG would put the password in the model context).
+There is no “call a human” RPC on `:1337`. The host agent chooses a **kit**, then either freezes the desk or just asks you in chat.
+
+### Three kits
+
+| Kit | Freeze? | When |
+| --- | --- | --- |
+| **desk** | yes | Secret or wall **on the 1280×800 session**: login, SSO, 2FA, captcha, payment, cookie wall. |
+| **chat** | no | Approval that is not a live GUI step: dangerous command, send mail, pay, install plugin, delete a routine, connector `needsAuth`. |
+| **host** | no | Something on **your Mac**: Documents/Desktop, camera/mic, local Docker, USB/WebAuthn. |
+
+`box-doctor` and `/tmp/*.log` are health of X/Chrome, not a human signal. “Cannot as the user” (password field, captcha) is text in the computer-use report, not a shell error.
+
+**Do it without a kit**
+
+- Shell: packages, csv/xlsx, parse html, tar, disk, pytest, public URL, `doctor`.
+- Desk, no secret: `box-chrome`, dock, non-password fields, scroll, GTK chooser 1100×680, switch windows.
+- Network if a session already exists: read / search / draft — do not send.
+
+**Desk kit — freeze**
+
+Same idea as original `request_box_help`. The host agent calls a tool; **that turn ends**. You work on the live 1280×800 over noVNC. You say you are done. The agent starts a **new** turn with a screenshot.
+
+Turn rhythm:
+
+1. Wall on the desk → `./scripts/gbm handoff -m 'Sign in to Google' [--reason auth] [--domain …]`
+2. Stop. No more tool calls that turn. GUI steps and Connect Exec return **409**.
+3. You open noVNC (`resize=off`), do the step, tell the agent you are done.
+4. `./scripts/gbm resume`, then a **new** screenshot of the live frame — not `handoff.png`.
+5. Still a wall → handoff again with a new instruction. Otherwise continue.
+
+Original keys:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `instruction` | yes | Short string for you, e.g. `Sign in to Google`. (`-m`) |
+| `reason` | no | `auth` \| `captcha` \| `payment` \| `other`. Login and 2FA are both `auth`. One value. |
+| `domain` | no | App you were entering (`drive.google.com`, `github.com`) |
+| `idp_domain` | no | Identity bar if different (`accounts.google.com`, `company.okta.com`) |
+
+No `url` / `display` / `window`. Cookie wall and Chrome “save password” are desk (`other` or omit reason), not a chat card. Auto-review of a shell command is a **different** channel.
+
+The agent must not click or screenshot while you type. We still **freeze** GUI on `:7070` / `:1337` (original model is already dead that turn; we freeze so a host agent that fails to stop cannot capture the password). After resume the agent looks at the **live** frame, not `handoff.png`. If you handed back with login unfinished, it either calls `handoff` again or continues from what is on screen.
+
+```
+POST /handoff   { instruction, reason?, domain?, idp_domain?, kind?: "desk" }
+POST /handoff/resume
+```
+
+`login` / `2fa` are stored as `auth`. `kind=chat` or `kind=host` returns **400** `not_desk` and does not freeze.
 
 ### Try this
 
 Box already `ready`. Optional: watch noVNC in another window.
 
 ```bash
-./scripts/gbm handoff --reason captcha -m 'Pretend this is a Cloudflare wall'
-# JSON: novnc URL, reason, screenshot=/workspace/handoff.png (frame *before* the freeze)
+./scripts/gbm handoff -m 'Pretend this is a Cloudflare wall' --reason captcha --domain example.com
+# JSON: kind=desk, instruction, reason, novnc URL
 # --open  → launches noVNC on the Mac
 
 ./scripts/gbm doctor
@@ -155,12 +204,11 @@ Box already `ready`. Optional: watch noVNC in another window.
 # do the thing, then:
 
 ./scripts/gbm resume
-./scripts/gbm observe                # look again; do not reuse handoff.png
+./scripts/gbm screenshot -o workspace/desk.png   # new turn; do not reuse handoff.png
+./scripts/gbm observe
 ```
 
-`--reason`: `captcha` | `login` | `2fa` | `payment` | `unclear` | `other`.
-
-Until resume, both `:7070` GUI steps and `:1337` Exec return **409**. `GET /handoff` (or `./scripts/gbm handoff` with no `--reason`) is the current state.
+Until resume, both `:7070` GUI steps and `:1337` Exec return **409**. `GET /handoff` (or `./scripts/gbm handoff` with no `-m`) is the current state. After `handoff`, a host agent **ends its turn** — no more tool calls until you say you are done, then `resume` and a screenshot.
 
 ## Ports
 
@@ -183,7 +231,7 @@ Prefer `./scripts/gbm`. The servers are still JSON HTTP.
 GET  /health
 GET  /doctor
 GET  /handoff
-POST /handoff            { reason, message? }
+POST /handoff            { instruction, reason?, domain?, idp_domain?, kind? }
 POST /handoff/resume
 POST /observe     { include_screenshot?, include_tree?, window? }
 POST /act         { steps: [ { type: shell|cdp|a11y|xdotool|screenshot, ... } ] }

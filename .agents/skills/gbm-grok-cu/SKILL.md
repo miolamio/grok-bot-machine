@@ -43,9 +43,18 @@ Button: 1 LEFT, 2 RIGHT, 3 MIDDLE. Scroll direction: 1 UP, 2 DOWN, 3 LEFT, 4 RIG
 
 Auth is `Bearer local` (CLI default). This is **not** `GBM_CONTROL_TOKEN`.
 
-## Human handoff
+## Human handoff (desk kit)
 
-If the PNG is a captcha, login, 2FA, or payment wall, do **not** click it. Switch to **gbm-desktop** and run `./scripts/gbm handoff --reason captcha` (or `login` / `2fa` / `payment`). Connect Exec is frozen until `./scripts/gbm resume`.
+If the PNG is a password field, SSO, 2FA, captcha, cookie wall, or payment — the CU worker may stop and report; **you** call the desk tool. Do **not** click or type.
+
+```bash
+./scripts/gbm handoff -m 'Sign in to Google' --reason auth --domain drive.google.com
+# login/2FA → auth; cookie wall → other or omit reason. instruction (-m) required.
+```
+
+Then **stop the turn** (no more Connect exec). New turn after the human says done: `./scripts/gbm resume` then `./scripts/gbm connect screenshot -o workspace/cu.png`. If the frame is still a wall, `handoff` again. Do not reuse the pre-freeze PNG.
+
+Chat cards (“may I send this?”, auto-review on Shell/MCP) and Mac permissions are **not** this tool — ask in conversation. Kits: **gbm-desktop**.
 
 ## When not to use this
 

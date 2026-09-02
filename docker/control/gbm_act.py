@@ -275,11 +275,31 @@ def main(argv: list[str] | None = None) -> int:
     ky = sub.add_parser("key", help="xdotool key (e.g. Return, ctrl+a)")
     ky.add_argument("keys", nargs="+")
 
-    ho = sub.add_parser("handoff", help="Freeze GUI; human uses noVNC. Omit --reason to read status.")
-    ho.add_argument("--reason", default=None, help="captcha | login | 2fa | payment | unclear | other")
-    ho.add_argument("-m", "--message", default="", help="What the human should do")
+    ho = sub.add_parser(
+        "handoff",
+        help="Freeze GUI; human uses noVNC. Omit -m/--instruction to read status.",
+    )
+    ho.add_argument(
+        "-m", "--instruction", "--message",
+        dest="instruction",
+        default=None,
+        help="Required to start. Short string for the human, e.g. Sign in to Google",
+    )
+    ho.add_argument(
+        "--reason",
+        default=None,
+        help="auth | captcha | payment | other (login/2fa → auth). Optional.",
+    )
+    ho.add_argument("--domain", default=None, help="App you were entering, e.g. drive.google.com")
+    ho.add_argument("--idp-domain", default=None, help="IdP host if different, e.g. accounts.google.com")
+    ho.add_argument(
+        "--kind",
+        default="desk",
+        help="desk (freeze). chat/host are not a freeze — ask in conversation.",
+    )
     ho.add_argument("--open", action="store_true", help="open noVNC in the Mac browser")
-    sub.add_parser("resume", help="End handoff; agent may click again")
+    rs = sub.add_parser("resume", help="End handoff; new turn looks at the desk")
+    rs.add_argument("-o", "--out", default=None, help="Copy after-screenshot here")
 
     cs = sub.add_parser("connect", help="Grok-faithful Connect-RPC on :1337")
     csub = cs.add_subparsers(dest="ccmd", required=True)
@@ -322,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
                 if isinstance(last, dict) and last.get("ok"):
                     emit(last)
                     return 0
-            except SystemExit as e:
+            except (SystemExit, OSError, Exception) as e:
                 last = {"ok": False, "error": str(e)}
             time.sleep(0.4)
         emit({"ok": False, "error": "control plane not ready", "last": last})
@@ -396,14 +416,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "handoff":
         _need_token(token)
-        if not args.reason:
+        inst = (args.instruction or "").strip()
+        extras = bool(
+            args.reason
+            or args.domain
+            or args.idp_domain
+            or ((args.kind or "desk") != "desk")
+        )
+        if not inst:
+            if extras:
+                emit({"ok": False, "error": "instruction_required"})
+                return 2
             emit(http(url, token, "GET", "/handoff", timeout=min(timeout, 15)))
             return 0
-        result = http(
-            url, token, "POST", "/handoff",
-            {"reason": args.reason, "message": args.message},
-            timeout=timeout,
-        )
+        body: dict[str, Any] = {
+            "instruction": inst,
+            "kind": args.kind or "desk",
+        }
+        if args.reason:
+            body["reason"] = args.reason
+        if args.domain:
+            body["domain"] = args.domain
+        if args.idp_domain:
+            body["idp_domain"] = args.idp_domain
+        result = http(url, token, "POST", "/handoff", body, timeout=timeout)
         emit(result)
         novnc = (result.get("handoff") or {}).get("novnc")
         if args.open and novnc:
@@ -414,6 +450,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "resume":
         _need_token(token)
         result = http(url, token, "POST", "/handoff/resume", {}, timeout=min(timeout, 15))
+        if isinstance(result, dict) and isinstance(result.get("pngBase64"), str):
+            persist_pngs(result, args.out or default_out("handoff-after.png"))
         emit(result)
         return 0 if result.get("ok") is not False else 1
 
