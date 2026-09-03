@@ -29,7 +29,7 @@ docker compose up -d --build   # if the box is not running
 ./scripts/gbm doctor           # blockers must be []; can_cdp is false until Chrome starts
 ```
 
-noVNC (human watch only): `http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=off`
+noVNC: `http://127.0.0.1:6080/` (`resize=off`; **Give back to agent** during handoff)
 
 ## What to call
 
@@ -42,7 +42,7 @@ noVNC (human watch only): `http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=o
 | Desk PNG | `./scripts/gbm screenshot -o workspace/desk.png` |
 | Pointer | `./scripts/gbm mouse 640 400` / `./scripts/gbm click 640 400` |
 | Type / key | `./scripts/gbm type 'text'` / `./scripts/gbm key Return` |
-| Human takeover (desk kit) | `./scripts/gbm handoff -m 'Sign in to Google' [--reason auth] [--domain] [--idp-domain]` then **stop the turn**; after the human says done, `resume` and screenshot |
+| Human takeover (desk kit) | `./scripts/gbm handoff -m 'Sign in to Google' [--reason auth] [--domain] [--idp-domain]` then **stop the turn**; after the human says done, `resume` and screenshot. CLI loops may use `--wait` instead of chatting. |
 
 Router (pick the first that fits):
 
@@ -86,16 +86,18 @@ Do **not** type passwords, 2FA, captchas, or card numbers. Do **not** screenshot
 # Direct Google login: --domain only, no --idp-domain.
 ```
 
-Then **stop the turn**. No more tool calls until the human says they are done. Do not retry 409. Do not `resume` yourself.
+Then **stop the turn**. No more tool calls until the human says they are done. Do not retry 409. Do not `resume` yourself. In this chat, do **not** pass `--wait` (it blocks). Unattended CLI: `--wait` (default 30 min) until they click **Give back to agent** on noVNC or run `gbm resume`.
 
-New turn, after they say done:
+New turn, after they say done (or `--wait` returns):
 
 ```bash
-./scripts/gbm resume
+./scripts/gbm resume          # skip if --wait already ended the freeze
 ./scripts/gbm screenshot -o workspace/desk.png   # look at the live frame
 ```
 
 Do not reuse `handoff.png`. Do not assume login succeeded: if the frame is still a wall, call `handoff` again with a new instruction. `--open` launches noVNC on the Mac. Until resume: GUI steps and Connect Exec are **409**; `shell` and tree-only `observe` still work.
+
+Chromium cookies live in `data/chrome-profile` on the host (`/home/box/chrome-profile`). They survive `compose down`.
 
 ### Chat — question only, desk stays yours
 
@@ -130,5 +132,5 @@ Password-manager secrets you must not read, and video-as-pixels, are out of scop
 - Idle has no Chrome; CDP empty until `box-chrome`.
 - Pointer moves inside Xvfb, not on the Mac.
 - `resize=off` on noVNC or coords drift.
-- `/workspace` on the host is `./workspace`.
+- `/workspace` on the host is `./workspace`. Chromium profile is `./data/chrome-profile` (gitignored).
 - Killing the CLI does not kill the desktop.

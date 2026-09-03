@@ -9,6 +9,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GBM = os.path.join(ROOT, "scripts", "gbm")
@@ -190,6 +193,47 @@ def main() -> int:
     if mv.get("ok") is not True:
         die(f"mouse after resume {mv}")
     ok("mouse after resume")
+
+    mounts = subprocess.run(
+        ["docker", "inspect", "-f", "{{range .Mounts}}{{.Destination}}\n{{end}}", CONTAINER],
+        capture_output=True, text=True, timeout=30,
+    )
+    if "/home/box/chrome-profile" not in (mounts.stdout or ""):
+        die(f"chrome-profile not mounted {mounts.stdout}")
+    run("shell", "mkdir -p /home/box/chrome-profile && echo persist-ok > /home/box/chrome-profile/.gbm-persist")
+    host_prof = os.path.join(ROOT, "data", "chrome-profile", ".gbm-persist")
+    if not os.path.isfile(host_prof):
+        die(f"chrome profile not on host {host_prof}")
+    ok("chrome profile volume")
+
+    pub = json.loads(urllib.request.urlopen("http://127.0.0.1:7070/handoff/public", timeout=10).read())
+    if pub.get("handoff"):
+        die(f"public idle {pub}")
+    run("handoff", "-m", "public-smoke")
+    pub = json.loads(urllib.request.urlopen("http://127.0.0.1:7070/handoff/public", timeout=10).read())
+    if (pub.get("handoff") or {}).get("instruction") != "public-smoke":
+        die(f"public active {pub}")
+    req = urllib.request.Request(
+        "http://127.0.0.1:7070/handoff/resume",
+        data=b"{}",
+        method="POST",
+        headers={"Origin": "http://127.0.0.1:6080", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        back = json.loads(resp.read())
+    if back.get("handoff") is not None:
+        die(f"origin resume {back}")
+    ok("public GET + noVNC origin resume")
+
+    def _resume_later() -> None:
+        time.sleep(1.0)
+        run("resume")
+
+    threading.Thread(target=_resume_later, daemon=True).start()
+    waited = run("handoff", "-m", "wait-smoke", "--wait", "--wait-timeout", "20", timeout=30)
+    if waited.get("ok") is not True or waited.get("handoff"):
+        die(f"wait {waited}")
+    ok("handoff --wait")
 
     print("ALL HANDOFF SMOKE CHECKS PASSED")
     return 0

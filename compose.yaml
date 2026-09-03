@@ -24,6 +24,8 @@ services:
       - "127.0.0.1:1337:1337"
     volumes:
       - ./workspace:/workspace
+      # Cookies / logged-in session. Host path is gitignored; survives compose down.
+      - ./data/chrome-profile:/home/box/chrome-profile
     shm_size: "64m"
     mem_limit: 1280m
     cpus: "1.0"

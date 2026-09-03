@@ -52,7 +52,7 @@ If the PNG is a password field, SSO, 2FA, captcha, cookie wall, or payment — t
 # login/2FA → auth; cookie wall → other or omit reason. instruction (-m) required.
 ```
 
-Then **stop the turn** (no more Connect exec). New turn after the human says done: `./scripts/gbm resume` then `./scripts/gbm connect screenshot -o workspace/cu.png`. If the frame is still a wall, `handoff` again. Do not reuse the pre-freeze PNG.
+Then **stop the turn** (no more Connect exec). New turn after the human says done (noVNC **Give back to agent**, or `gbm resume`): `./scripts/gbm connect screenshot -o workspace/cu.png`. If the frame is still a wall, `handoff` again. Do not reuse the pre-freeze PNG. Do not pass `--wait` in chat.
 
 Chat cards (“may I send this?”, auto-review on Shell/MCP) and Mac permissions are **not** this tool — ask in conversation. Kits: **gbm-desktop**.
 

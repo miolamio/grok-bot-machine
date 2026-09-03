@@ -2,6 +2,9 @@
 workspace/*
 !workspace/.gitkeep
 
+# Chromium profile (cookies, login after handoff). Never commit.
+data/
+
 # Interview dumps, original-bot tarballs, local screenshots
 .dev/
 

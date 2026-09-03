@@ -4,5 +4,6 @@
 .playwright-cli
 .agents
 workspace
+data
 *.md
 .DS_Store

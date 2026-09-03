@@ -34,11 +34,11 @@ First build installs Debian + Chromium and takes several minutes. `./scripts/gbm
 docker compose down
 ```
 
-`./workspace` is bind-mounted as `/workspace` (the only persistent user files).
+`./workspace` is `/workspace`. Chromium’s profile is `./data/chrome-profile` → `/home/box/chrome-profile` (logins survive recreate; not in git).
 
 ### Look at the desk
 
-[http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=off](http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=off) — localhost only.
+[http://127.0.0.1:6080/](http://127.0.0.1:6080/) — localhost only. The page is 1:1 noVNC (`resize=off`) plus a **Give back to agent** bar during handoff.
 
 Keep `resize=off`. Scaling stretches the 1280×800 framebuffer and breaks click coordinates. You should see wallpaper, xfwm4, and a transparent Plank dock. Chromium is **not** started at idle.
 
@@ -96,6 +96,9 @@ From the repository root. `--help` is the flag list. JSON on stdout. PNGs go to 
 ./scripts/gbm handoff -m 'Sign in to Google' --reason auth --domain drive.google.com
 ./scripts/gbm resume
 ./scripts/gbm screenshot -o workspace/desk.png   # new turn: look at the live frame
+
+# unattended: block until the human clicks «Give back to agent» or runs resume
+./scripts/gbm handoff -m 'Sign in to Google' --reason auth --wait --open
 ```
 
 | Command | API |
@@ -103,7 +106,7 @@ From the repository root. `--help` is the flag list. JSON on stdout. PNGs go to 
 | `health` / `ready` / `doctor` / `observe` / `act` / `shell` | Native `:7070` |
 | `screenshot` / `click` / `mouse` / `type` / `key` | Native `:7070` (`xdotool` or capture) |
 | `connect …` | Connect-RPC `:1337` |
-| `handoff` / `resume` | Desk kit: freeze GUI for a human on noVNC; unfreeze. Next look is a live screenshot. |
+| `handoff` / `resume` | Desk kit: freeze GUI; unfreeze. `--wait` blocks until resume. Next look is a live screenshot. |
 
 `:7070` uses `GBM_CONTROL_TOKEN` (compose default `dev-local-token`). If unset, the CLI reads `/tmp/gbm-control.token` from the container. `:1337` uses `Authorization: Bearer local` unless `GBM_CONNECT_TOKEN` is set. Those two secrets are different unless you set them equal.
 
@@ -158,9 +161,13 @@ Turn rhythm:
 
 1. Wall on the desk → `./scripts/gbm handoff -m 'Sign in to Google' [--reason auth] [--domain …]`
 2. Stop. No more tool calls that turn. GUI steps and Connect Exec return **409**.
-3. You open noVNC (`resize=off`), do the step, tell the agent you are done.
-4. `./scripts/gbm resume`, then a **new** screenshot of the live frame — not `handoff.png`.
+3. You open noVNC (`resize=off`), do the step, click **Give back to agent** (or `./scripts/gbm resume`).
+4. Agent takes a **new** screenshot of the live frame — not `handoff.png`.
 5. Still a wall → handoff again with a new instruction. Otherwise continue.
+
+A CLI loop can pass `--wait` (default 30 min) instead of chatting: stdout is the JSON after resume. `--open` launches noVNC. Host chat agents should **not** pass `--wait`.
+
+Logged-in Chrome survives `docker compose down`: the profile is `./data/chrome-profile` on the host (`/home/box/chrome-profile` in the box). Gitignored. Delete that directory to forget cookies.
 
 Original keys:
 
@@ -200,15 +207,15 @@ Box already `ready`. Optional: watch noVNC in another window.
 ./scripts/gbm shell 'echo still-ok'  # allowed
 ./scripts/gbm observe                # tree only, allowed
 
-# You: open http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=off
-# do the thing, then:
+# You: open http://127.0.0.1:6080/ (bar + 1:1 desk)
+# do the thing, click «Give back to agent», or:
 
 ./scripts/gbm resume
 ./scripts/gbm screenshot -o workspace/desk.png   # new turn; do not reuse handoff.png
 ./scripts/gbm observe
 ```
 
-Until resume, both `:7070` GUI steps and `:1337` Exec return **409**. `GET /handoff` (or `./scripts/gbm handoff` with no `-m`) is the current state. After `handoff`, a host agent **ends its turn** — no more tool calls until you say you are done, then `resume` and a screenshot.
+Until resume, both `:7070` GUI steps and `:1337` Exec return **409**. `GET /handoff` (or `./scripts/gbm handoff` with no `-m`) is the current state. `GET /handoff/public` is unauthenticated (instruction only) for the noVNC bar. After `handoff`, a host agent **ends its turn** — no more tool calls until you hand the desk back, then a screenshot.
 
 ## Ports
 
@@ -231,8 +238,9 @@ Prefer `./scripts/gbm`. The servers are still JSON HTTP.
 GET  /health
 GET  /doctor
 GET  /handoff
+GET  /handoff/public     no auth; { instruction, reason, novnc } for the noVNC bar
 POST /handoff            { instruction, reason?, domain?, idp_domain?, kind? }
-POST /handoff/resume
+POST /handoff/resume     Bearer, or Origin http://127.0.0.1:6080 (the noVNC button)
 POST /observe     { include_screenshot?, include_tree?, window? }
 POST /act         { steps: [ { type: shell|cdp|a11y|xdotool|screenshot, ... } ] }
 ```
@@ -269,7 +277,7 @@ python3 scripts/a11y-smoke.py      # GTK set_value + perform_action
 python3 scripts/inside-smoke.py    # gbm-act in-box; kill it, Xvfb stays
 python3 scripts/mcp-smoke.py       # MCP hits the container; Mac cursor still
 python3 scripts/connect-smoke.py   # Connect 401/200/415/404, PNG, click
-python3 scripts/handoff-smoke.py   # freeze GUI, shell still works, resume
+python3 scripts/handoff-smoke.py   # freeze GUI, shell still works, resume, --wait, Chrome profile volume
 ```
 
 Each script prints `ALL … SMOKE CHECKS PASSED` and exits 0. `smoke.sh` leaves Thunar and Chromium running. Watch noVNC: the pointer should move in the **container**.
@@ -282,7 +290,7 @@ Each script prints `ALL … SMOKE CHECKS PASSED` and exits 0. `smoke.sh` leaves 
 
 One 1280×800 desk (`DISPLAY=:1`). Do not change width while an agent is recording.
 
-Not cloned: `exec-daemon` ELF, pod-daemon, webauthn, egress, UA stamps, window-owner tokens, PTY `1338`, window-router `1339`, extra desks (`start-window N`). Host CDP is `9222` via socat; original formula is `:1 → 9223`. Handoff is localhost noVNC on this one desk, not a tokened fork-noVNC.
+Not cloned: `exec-daemon` ELF, pod-daemon, webauthn, egress, UA stamps, window-owner tokens, PTY `1338`, window-router `1339`, extra desks (`start-window N`). Host CDP is `9222` via socat; original formula is `:1 → 9223`. Handoff is localhost noVNC on this one desk, not a tokened fork-noVNC. Chrome cookies stay in `./data/chrome-profile` (not cookie-sync).
 
 Keep xfwm4 + picom xrender + Plank. Do not swap in fluxbox.
 
@@ -298,4 +306,5 @@ scripts/gbm                  # host CLI
 mcp/gbm_mcp.py               # host MCP stdio
 scripts/                     # smokes
 workspace/                   # bind-mounted /workspace
+data/chrome-profile/         # Chromium profile (gitignored)
 ```

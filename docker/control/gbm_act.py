@@ -298,6 +298,17 @@ def main(argv: list[str] | None = None) -> int:
         help="desk (freeze). chat/host are not a freeze — ask in conversation.",
     )
     ho.add_argument("--open", action="store_true", help="open noVNC in the Mac browser")
+    ho.add_argument(
+        "--wait",
+        action="store_true",
+        help="Block until resume (noVNC button or gbm resume). stdout is the final JSON.",
+    )
+    ho.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=1800.0,
+        help="Seconds to wait with --wait (default 1800)",
+    )
     rs = sub.add_parser("resume", help="End handoff; new turn looks at the desk")
     rs.add_argument("-o", "--out", default=None, help="Copy after-screenshot here")
 
@@ -440,12 +451,37 @@ def main(argv: list[str] | None = None) -> int:
         if args.idp_domain:
             body["idp_domain"] = args.idp_domain
         result = http(url, token, "POST", "/handoff", body, timeout=timeout)
-        emit(result)
         novnc = (result.get("handoff") or {}).get("novnc")
         if args.open and novnc:
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             subprocess.run([opener, novnc], check=False, timeout=8, capture_output=True)
-        return 0 if result.get("ok") is not False else 1
+        if result.get("ok") is False:
+            emit(result)
+            return 1
+        if not args.wait:
+            emit(result)
+            return 0
+        sys.stderr.write(
+            "gbm: waiting for resume (noVNC «Give back to agent» or ./scripts/gbm resume)\n"
+        )
+        if novnc:
+            sys.stderr.write("gbm: %s\n" % novnc)
+        sys.stderr.flush()
+        import time
+        deadline = time.time() + max(1.0, float(args.wait_timeout))
+        last: Any = result
+        while time.time() < deadline:
+            time.sleep(0.5)
+            last = http(url, token, "GET", "/handoff", timeout=min(timeout, 15))
+            if not last.get("handoff"):
+                after = default_out("handoff-after.png")
+                out: dict[str, Any] = {"ok": True, "handoff": None, "waited": True}
+                if os.path.isfile(after):
+                    out["screenshot"] = after
+                emit(out)
+                return 0
+        emit({"ok": False, "error": "handoff_timeout", "handoff": (last or {}).get("handoff")})
+        return 1
 
     if args.cmd == "resume":
         _need_token(token)

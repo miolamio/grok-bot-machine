@@ -19,15 +19,16 @@ export QT_ACCESSIBILITY=1
 export ACCESSIBILITY_ENABLED=1
 unset NO_AT_BRIDGE || true
 
-mkdir -p "$XDG_RUNTIME_DIR" "$HOME/.config" "$HOME/.cache" "$HOME/.local/share" /tmp/.X11-unix /workspace
+mkdir -p "$XDG_RUNTIME_DIR" "$HOME/.config" "$HOME/.cache" "$HOME/.local/share" \
+  "$HOME/chrome-profile" /tmp/.X11-unix /workspace
 chmod 700 "$XDG_RUNTIME_DIR" || true
 chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 
 if [ "$(id -u)" -eq 0 ]; then
   chown -R box:box "$XDG_RUNTIME_DIR" "$HOME" || true
   # OrbStack virtiofs often refuses chown on the bind mount; make it world-writable.
-  chown box:box /workspace 2>/dev/null || true
-  chmod 1777 /workspace 2>/dev/null || true
+  chown box:box /workspace "$HOME/chrome-profile" 2>/dev/null || true
+  chmod 1777 /workspace "$HOME/chrome-profile" 2>/dev/null || true
   if command -v runuser >/dev/null 2>&1; then
     exec runuser -u box -- "$0" "$@"
   fi

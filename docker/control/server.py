@@ -29,6 +29,27 @@ DISPLAY = os.environ.get("DISPLAY", ":1")
 LOCK = threading.Lock()
 
 ACT_TYPES = {"shell", "cdp", "a11y", "xdotool", "screenshot"}
+HANDBACK_ORIGINS = frozenset({
+    "http://127.0.0.1:6080",
+    "http://localhost:6080",
+})
+
+
+def cors_origin(header: str | None) -> str | None:
+    o = (header or "").strip().rstrip("/")
+    if o in HANDBACK_ORIGINS:
+        return o
+    return None
+
+
+def public_handoff(h: dict | None) -> dict | None:
+    if not h:
+        return None
+    out: dict[str, Any] = {"active": True}
+    for k in ("instruction", "reason", "domain", "idp_domain", "kind", "novnc", "since"):
+        if k in h:
+            out[k] = h[k]
+    return out
 
 
 def _json(obj: Any) -> bytes:
@@ -365,15 +386,18 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
-    def _auth(self) -> bool:
+    def _token_ok(self) -> bool:
         hdr = self.headers.get("Authorization") or ""
         tok = self.headers.get("X-GBM-Token") or ""
         if hdr.lower().startswith("bearer "):
             tok = hdr[7:].strip()
-        if not TOKEN or tok != TOKEN:
-            self._send(401, {"error": "unauthorized"})
-            return False
-        return True
+        return bool(TOKEN) and tok == TOKEN
+
+    def _auth(self) -> bool:
+        if self._token_ok():
+            return True
+        self._send(401, {"error": "unauthorized"})
+        return False
 
     def _read_json(self) -> dict:
         n = int(self.headers.get("Content-Length") or "0")
@@ -384,18 +408,47 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(raw.decode())
 
-    def _send(self, code: int, obj: Any) -> None:
+    def _send(self, code: int, obj: Any, origin: str | None = None) -> None:
         data = _json(obj)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(data)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        origin = cors_origin(self.headers.get("Origin"))
+        if origin and path in (
+            "/handoff/resume", "/v1/handoff/resume",
+            "/handoff/public", "/v1/handoff/public",
+        ):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Authorization, X-GBM-Token",
+            )
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Vary", "Origin")
+            self.end_headers()
+            return
+        self.send_error(404)
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/health":
             self._send(200, {"ok": True, "display": DISPLAY})
+            return
+        if path in ("/handoff/public", "/v1/handoff/public"):
+            origin = cors_origin(self.headers.get("Origin"))
+            with LOCK:
+                pub = public_handoff(handoff.read())
+            self._send(200, {"ok": True, "handoff": pub}, origin=origin)
             return
         if not self._auth():
             return
@@ -412,8 +465,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        origin = cors_origin(self.headers.get("Origin"))
         if path == "/health":
             self._send(200, {"ok": True})
+            return
+        if path in ("/handoff/resume", "/v1/handoff/resume"):
+            if not self._token_ok() and not origin:
+                self._send(401, {"error": "unauthorized"})
+                return
+            try:
+                self._read_json()
+            except json.JSONDecodeError:
+                pass
+            with LOCK:
+                self._send(200, _resume_handoff(), origin=origin)
             return
         if not self._auth():
             return
@@ -427,9 +492,6 @@ class Handler(BaseHTTPRequestHandler):
                 if path in ("/handoff", "/v1/handoff"):
                     code, payload = _start_handoff(body if isinstance(body, dict) else {})
                     self._send(code, payload)
-                    return
-                if path in ("/handoff/resume", "/v1/handoff/resume"):
-                    self._send(200, _resume_handoff())
                     return
                 if path in ("/observe", "/v1/observe"):
                     req = body if isinstance(body, dict) else {}

@@ -18,7 +18,7 @@ from typing import Any
 PATH = os.environ.get("GBM_HANDOFF_PATH", "/tmp/gbm-handoff.json")
 NOVNC = os.environ.get(
     "GBM_NOVNC_URL",
-    "http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=off",
+    "http://127.0.0.1:6080/",
 )
 REASONS = ("auth", "captcha", "payment", "other")
 REASON_ALIASES = {

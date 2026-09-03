@@ -1,5 +1,80 @@
 <!doctype html>
+<html lang="en">
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="0;url=vnc.html?autoconnect=1&resize=off">
-<title>grok-bot</title>
-<p><a href="vnc.html?autoconnect=1&amp;resize=off">Open desktop (1:1)</a></p>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grok-bot desk</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1e2330; }
+  iframe { border: 0; width: 100%; height: 100%; display: block; }
+  #bar {
+    display: none;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 9;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: rgba(20, 24, 32, 0.92);
+    color: #f4f4f5;
+    font: 14px/1.3 ui-sans-serif, system-ui, sans-serif;
+  }
+  #bar b { font-weight: 600; }
+  #bar span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #bar button {
+    border: 0;
+    border-radius: 6px;
+    padding: 8px 12px;
+    background: #3b82f6;
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+  }
+  #bar button:disabled { opacity: 0.5; cursor: default; }
+</style>
+<iframe src="vnc.html?autoconnect=1&amp;resize=off" title="desktop"></iframe>
+<div id="bar">
+  <b>Human has the desk</b>
+  <span id="msg"></span>
+  <button type="button" id="back">Give back to agent</button>
+</div>
+<script>
+(function () {
+  var host = location.hostname === "localhost" ? "localhost" : "127.0.0.1";
+  var api = "http://" + host + ":7070";
+  var bar = document.getElementById("bar");
+  var msg = document.getElementById("msg");
+  var btn = document.getElementById("back");
+
+  function tick() {
+    fetch(api + "/handoff/public")
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var h = j && j.handoff;
+        if (h && h.instruction) {
+          bar.style.display = "flex";
+          msg.textContent = h.instruction + (h.reason ? " (" + h.reason + ")" : "");
+        } else {
+          bar.style.display = "none";
+          msg.textContent = "";
+        }
+      })
+      .catch(function () {});
+  }
+
+  btn.addEventListener("click", function () {
+    btn.disabled = true;
+    fetch(api + "/handoff/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    })
+      .then(function () { tick(); })
+      .catch(function () {})
+      .then(function () { btn.disabled = false; });
+  });
+
+  tick();
+  setInterval(tick, 1500);
+})();
+</script>
+</html>
