@@ -5,6 +5,7 @@
 <title>grok-bot desk</title>
 <style>
   html, body { margin: 0; height: 100%; background: #1e2330; }
+  body { box-sizing: border-box; }
   iframe { border: 0; width: 100%; height: 100%; display: block; }
   #bar {
     display: none;
@@ -126,6 +127,8 @@
   function show(h) {
     var text = h.instruction + (h.reason ? " (" + h.reason + ")" : "");
     bar.style.display = "flex";
+    document.body.classList.add("handoff");
+    document.body.style.paddingTop = bar.offsetHeight + "px";
     msg.textContent = text;
     startTitle(text);
     if (!wasOn) {
@@ -142,6 +145,8 @@
 
   function hide() {
     bar.style.display = "none";
+    document.body.classList.remove("handoff");
+    document.body.style.paddingTop = "";
     msg.textContent = "";
     stopTitle();
     wasOn = false;

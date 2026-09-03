@@ -233,6 +233,12 @@ def main() -> int:
     waited = run("handoff", "-m", "wait-smoke", "--wait", "--wait-timeout", "20", timeout=30)
     if waited.get("ok") is not True or waited.get("handoff"):
         die(f"wait {waited}")
+    shot = waited.get("screenshot")
+    if not shot:
+        die(f"wait missing after-screenshot {waited}")
+    host_wait = shot if os.path.isfile(str(shot)) else os.path.join(ROOT, "workspace", os.path.basename(str(shot)))
+    if not png_ok(host_wait):
+        die(f"wait after png bad {host_wait}")
     ok("handoff --wait")
 
     print("ALL HANDOFF SMOKE CHECKS PASSED")

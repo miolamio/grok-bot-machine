@@ -30,7 +30,11 @@ import handoff  # noqa: E402
 
 BIND = os.environ.get("GBM_CONNECT_BIND", "0.0.0.0")
 PORT = int(os.environ.get("GBM_CONNECT_PORT", "1337"))
-AUTH = os.environ.get("GBM_CONNECT_AUTH_TOKEN", "local")
+AUTH = (
+    os.environ.get("GBM_CONNECT_TOKEN", "").strip()
+    or os.environ.get("GBM_CONNECT_AUTH_TOKEN", "").strip()
+    or "local"
+)
 ALSO = os.environ.get("GBM_CONTROL_TOKEN", "")
 DISPLAY = os.environ.get("DISPLAY", ":1")
 

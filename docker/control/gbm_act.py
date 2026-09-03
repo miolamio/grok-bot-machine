@@ -475,6 +475,9 @@ def main(argv: list[str] | None = None) -> int:
             last = http(url, token, "GET", "/handoff", timeout=min(timeout, 15))
             if not last.get("handoff"):
                 after = default_out("handoff-after.png")
+                until = time.time() + 2.0
+                while time.time() < until and not os.path.isfile(after):
+                    time.sleep(0.1)
                 out: dict[str, Any] = {"ok": True, "handoff": None, "waited": True}
                 if os.path.isfile(after):
                     out["screenshot"] = after

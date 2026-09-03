@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import traceback
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
@@ -372,11 +372,12 @@ def _start_handoff(body: dict) -> tuple[int, dict]:
 
 
 def _resume_handoff() -> dict:
-    handoff.clear()
+    # Grab first so --wait sees the PNG as soon as the flag is gone.
     out: dict[str, Any] = {"ok": True, "handoff": None}
     meta = _write_png(handoff.AFTER_SHOT)
     if meta:
         out.update(meta)
+    handoff.clear()
     return out
 
 
@@ -527,7 +528,7 @@ def main() -> int:
     if "--doctor" in sys.argv:
         print(json.dumps(doctor(), indent=2))
         return 0
-    httpd = HTTPServer((BIND, PORT), Handler)
+    httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     sys.stderr.write(f"gbm-control listening on {BIND}:{PORT} display={DISPLAY}\n")
     httpd.serve_forever()
     return 0
