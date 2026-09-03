@@ -38,7 +38,7 @@ docker compose down
 
 ### Look at the desk
 
-[http://127.0.0.1:6080/](http://127.0.0.1:6080/) — localhost only. The page is 1:1 noVNC (`resize=off`) plus a **Give back to agent** bar during handoff.
+[http://127.0.0.1:6080/](http://127.0.0.1:6080/) — localhost only. The page is 1:1 noVNC (`resize=off`) plus a **top** bar during handoff (**Give back to agent**, tab title flash, chime).
 
 Keep `resize=off`. Scaling stretches the 1280×800 framebuffer and breaks click coordinates. You should see wallpaper, xfwm4, and a transparent Plank dock. Chromium is **not** started at idle.
 
